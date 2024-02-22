@@ -34,5 +34,5 @@ Contributions to the `iec104_client` project are welcome. Please feel free to fo
 
 ## License
 
-This project is open-sourced under the [MIT License](LICENSE).
+This project is open-sourced under the [MIT License](LICENSE.md).
 
