@@ -28,10 +28,10 @@ class IEC104_Client:
         self.last_i_frame_received_time = None  # Para T2
         self.last_frame_sent_or_received_time = None  # Para T3
         self.waiting_for_startdt_con = False  # Para T0
-        self.t0 = 15
-        self.t1 = 7.5
-        self.t2 = 5
-        self.t3 = 10
+        self.t0 = 30
+        self.t1 = 15
+        self.t2 = 10
+        self.t3 = 20
         # almacenamiento
         self.data_queue = queue.Queue()
 
@@ -56,20 +56,17 @@ class IEC104_Client:
             try:
                 response = self.sock.recv(1024)
                 if not response:
-                    break  # Si no hay respuesta, se sale del bucle
+                    logging.info("Connection closed by remote host, attempting to reconnect...")
+                    self.reconnect()  # Intenta reconectar
+                    break
                 self.response_handler(response)
-
-            except Exception as e:
-                if self.connection_start_time is not None:
-                    # Captura el momento en que ocurre el error
-                    self.connection_end_time = time.time()
-                    connection_duration = self.connection_end_time - self.connection_start_time
-                    logging.info(
-                        f"Connection lasted {connection_duration} seconds")
-                logging.error(f"Receiver thread error: {e}")
-                self.stop()
+            except socket.error as e:
+                logging.exception(f"Socket error occurred: {e}, attempting to reconnect...")
+                self.reconnect()  # Intenta reconectar
                 break
-
+            except Exception as e:
+                logging.exception(f"Unexpected error in receiver_thread: {e}")
+                break
         logging.info("Receiver thread exiting")
 
     def response_handler(self, response):
@@ -220,8 +217,30 @@ class IEC104_Client:
             frame = self.data_queue.get(timeout=1)
             return frame
         except queue.Empty:
-            logging.info("No frames available in queue.")
+            print("No frames available in queue.")
             return None
 
     def get_queue_size(self):
         return self.data_queue.qsize()
+    
+    def reconnect(self):
+        logging.info("Attempting to reconnect...")
+        self.shutdown_flag.clear()  
+        try:
+            self.sock.close()  # Cierra el socket actual 
+        except Exception as e:
+            logging.error(f"Error closing socket during reconnection: {e}")
+
+        while not self.shutdown_flag.is_set():
+            try:
+                self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)  # Crea un nuevo socket
+                self.sock.connect((self.rt_host, self.rt_port))  # Intenta reconectar
+                logging.info("Reconnected successfully")
+                self.startdt_received.clear()  # Restablece la señal de STARTDT_CON
+                threading.Thread(target=self.receiver_thread).start()  # Reinicia el hilo receptor
+                threading.Thread(target=self.timeouts_handler).start()  # Reinicia el manejo de timeouts
+                self.send_u_frame(self.startdt_act)  # Envía STARTDT_ACT para reiniciar la comunicación
+                break  # Sale del bucle si la reconexión es exitosa
+            except Exception as e:
+                logging.error(f"Reconnection failed: {e}, retrying in 5 seconds...")
+                time.sleep(5)  #
